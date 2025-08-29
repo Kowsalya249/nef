@@ -1,12 +1,14 @@
 package sbi
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"runtime/debug"
 	"sync"
+	"time"
 
-	nef_context "github.com/free5gc/nef/internal/context"
 	"github.com/free5gc/nef/internal/logger"
 	"github.com/free5gc/nef/internal/sbi/processor"
 	"github.com/free5gc/nef/pkg/app"
@@ -23,8 +25,6 @@ const (
 
 type nef interface {
 	app.App
-	Context() *nef_context.NefContext
-	Config() *factory.Config
 	Processor() *processor.Processor
 }
 
@@ -92,9 +92,13 @@ func (s *Server) Run(wg *sync.WaitGroup) error {
 }
 
 func (s *Server) Terminate() {
+	const defaultShutdownTimeout time.Duration = 2 * time.Second
+
 	if s.httpServer != nil {
 		logger.SBILog.Infof("Stop SBI server (listen on %s)", s.httpServer.Addr)
-		if err := s.httpServer.Close(); err != nil {
+		toCtx, cancel := context.WithTimeout(context.Background(), defaultShutdownTimeout)
+		defer cancel()
+		if err := s.httpServer.Shutdown(toCtx); err != nil {
 			logger.SBILog.Errorf("Could not close SBI server: %#v", err)
 		}
 	}
@@ -126,7 +130,7 @@ func (s *Server) startServer(wg *sync.WaitGroup) {
 		err = fmt.Errorf("scheme [%s] is not supported", scheme)
 	}
 
-	if err != nil && err != http.ErrServerClosed {
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.SBILog.Errorf("SBI server error: %+v", err)
 	}
 	logger.SBILog.Warnf("SBI server (listen on %s) stopped", s.httpServer.Addr)
