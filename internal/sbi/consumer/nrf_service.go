@@ -16,6 +16,7 @@ import (
 	"github.com/free5gc/openapi/models"
 	"github.com/free5gc/openapi/nrf/NFDiscovery"
 	"github.com/free5gc/openapi/nrf/NFManagement"
+	sbi_metrics "github.com/free5gc/util/metrics/sbi"
 )
 
 const (
@@ -80,6 +81,7 @@ func (s *nnrfService) getNFDiscoveryClient(uri string) *NFDiscovery.APIClient {
 	} else {
 		configuration := NFDiscovery.NewConfiguration()
 		configuration.SetBasePath(uri)
+		configuration.SetMetrics(sbi_metrics.SbiMetricHook)
 		configuration.SetHTTPClient(http.DefaultClient)
 		cli := NFDiscovery.NewAPIClient(configuration)
 
@@ -99,6 +101,7 @@ func (s *nnrfService) getNFManagementClient(uri string) *NFManagement.APIClient 
 	} else {
 		configuration := NFManagement.NewConfiguration()
 		configuration.SetBasePath(uri)
+		configuration.SetMetrics(sbi_metrics.SbiMetricHook)
 		cli := NFManagement.NewAPIClient(configuration)
 
 		s.nfMngmntMu.RUnlock()

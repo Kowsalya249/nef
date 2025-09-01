@@ -74,7 +74,7 @@ func NewApp(
 
 	// We launch the server only if the user specified it, but we still defined the metrics to avoid checking if
 	// the metrics are enabled each time the prometheus collector are called.
-	features := map[utils.MetricTypeEnabled]bool{}
+	features := map[utils.MetricTypeEnabled]bool{utils.SBI: true}
 	customMetrics := make(map[utils.MetricTypeEnabled][]prometheus.Collector)
 	if cfg.AreMetricsEnabled() {
 		if nef.metricsServer, err = metrics.NewServer(

@@ -1,10 +1,8 @@
 package consumer
 
 import (
-	nef_context "github.com/free5gc/nef/internal/context"
 	"github.com/free5gc/nef/internal/logger"
 	"github.com/free5gc/nef/pkg/app"
-	"github.com/free5gc/nef/pkg/factory"
 	"github.com/free5gc/openapi"
 	"github.com/free5gc/openapi/nrf/NFDiscovery"
 	"github.com/free5gc/openapi/nrf/NFManagement"
@@ -14,9 +12,6 @@ import (
 
 type nef interface {
 	app.App
-
-	Context() *nef_context.NefContext
-	Config() *factory.Config
 }
 
 type Consumer struct {

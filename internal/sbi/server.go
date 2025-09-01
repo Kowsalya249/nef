@@ -15,6 +15,7 @@ import (
 	"github.com/free5gc/nef/pkg/factory"
 	"github.com/free5gc/util/httpwrapper"
 	logger_util "github.com/free5gc/util/logger"
+	"github.com/free5gc/util/metrics"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
@@ -41,6 +42,8 @@ func NewServer(nef nef, tlsKeyLogPath string) (*Server, error) {
 	}
 
 	s.router = logger_util.NewGinWithLogrus(logger.GinLog)
+
+	s.router.Use(metrics.InboundMetrics())
 
 	endpoints := s.getTrafficInfluenceRoutes()
 	group := s.router.Group(factory.TraffInfluResUriPrefix)

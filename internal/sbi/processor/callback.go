@@ -6,6 +6,7 @@ import (
 	"github.com/free5gc/nef/internal/logger"
 	"github.com/free5gc/openapi"
 	"github.com/free5gc/openapi/models"
+	"github.com/free5gc/util/metrics/sbi"
 	"github.com/gin-gonic/gin"
 )
 
@@ -17,7 +18,8 @@ func (p *Processor) SmfNotification(
 
 	af, sub := p.Context().FindAfSub(eeNotif.NotifId)
 	if sub == nil {
-		pd := openapi.ProblemDetailsDataNotFound("Subscrption is not found")
+		pd := openapi.ProblemDetailsDataNotFound("Subscription is not found")
+		c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
 		c.JSON(http.StatusNotFound, pd)
 		return
 	}

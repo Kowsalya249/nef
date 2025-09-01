@@ -7,10 +7,15 @@ import (
 	"github.com/free5gc/nef/pkg/factory"
 	"github.com/free5gc/openapi"
 	"github.com/free5gc/openapi/models"
+	"github.com/free5gc/util/metrics/sbi"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
+// GetTrafficInfluenceSubscription Read all subscriptions for a given AF
+// 3GPP TS 29.522 Release 17 version 17.6.0
+// Resource structure: 5.4.1
+// Request/Response  : 5.4.1.2.3.2
 func (p *Processor) GetTrafficInfluenceSubscription(
 	c *gin.Context,
 	afID string,
@@ -20,6 +25,7 @@ func (p *Processor) GetTrafficInfluenceSubscription(
 	af := p.Context().GetAf(afID)
 	if af == nil {
 		pd := openapi.ProblemDetailsDataNotFound("AF is not found")
+		c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
 		c.JSON(http.StatusNotFound, pd)
 		return
 	}
@@ -37,6 +43,10 @@ func (p *Processor) GetTrafficInfluenceSubscription(
 	c.JSON(http.StatusOK, &tiSubs)
 }
 
+// PostTrafficInfluenceSubscription Create a new subscription to traffic influence
+// 3GPP TS 29.522 Release 17 version 17.6.0
+// Resource structure: 5.4.1
+// Request/Response  : 5.4.1.2.3.3
 func (p *Processor) PostTrafficInfluenceSubscription(
 	c *gin.Context,
 	afID string,
@@ -44,9 +54,10 @@ func (p *Processor) PostTrafficInfluenceSubscription(
 ) {
 	logger.TrafInfluLog.Infof("PostTrafficInfluenceSubscription - afID[%s]", afID)
 
-	rsp := validateTrafficInfluenceData(tiSub)
-	if rsp != nil {
-		c.JSON(rsp.Status, rsp.Body)
+	problemDetails := validateTrafficInfluenceData(tiSub)
+	if problemDetails != nil {
+		c.Set(sbi.IN_PB_DETAILS_CTX_STR, problemDetails.Cause)
+		c.JSON(int(problemDetails.Status), problemDetails)
 		return
 	}
 
@@ -56,6 +67,7 @@ func (p *Processor) PostTrafficInfluenceSubscription(
 		af = nefCtx.NewAf(afID)
 		if af == nil {
 			pd := openapi.ProblemDetailsSystemFailure("No resource can be allocated")
+			c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
 			c.JSON(int(pd.Status), pd)
 			return
 		}
@@ -68,6 +80,7 @@ func (p *Processor) PostTrafficInfluenceSubscription(
 	afSub := af.NewSub(correID, tiSub)
 	if afSub == nil {
 		pd := openapi.ProblemDetailsSystemFailure("No resource can be allocated")
+		c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
 		c.JSON(int(pd.Status), pd)
 		return
 	}
@@ -75,26 +88,47 @@ func (p *Processor) PostTrafficInfluenceSubscription(
 	if len(tiSub.Gpsi) > 0 || len(tiSub.Ipv4Addr) > 0 || len(tiSub.Ipv6Addr) > 0 {
 		// Single UE, sent to PCF
 		asc := p.convertTrafficInfluSubToAppSessionContext(tiSub, afSub.NotifCorreID)
-		rspStatus, rspBody, appSessID := p.Consumer().PostAppSessions(asc)
-		if rspStatus != http.StatusCreated {
-			c.JSON(rspStatus, rspBody)
+		appSessId, pd, err := p.Consumer().PostAppSessions(asc)
+		switch {
+		case pd != nil:
+			c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
+			c.JSON(int(pd.Status), pd)
 			return
+		case err != nil:
+			problemDetails := &models.ProblemDetails{
+				Status: http.StatusInternalServerError,
+				Detail: "Query to PCF failed",
+			}
+			c.Set(sbi.IN_PB_DETAILS_CTX_STR, problemDetails.Cause)
+			c.JSON(int(problemDetails.Status), problemDetails)
+			return
+		default:
+			afSub.AppSessID = appSessId
 		}
-		afSub.AppSessID = appSessID
 	} else if len(tiSub.ExternalGroupId) > 0 || tiSub.AnyUeInd {
 		// Group or any UE, sent to UDR
 		afSub.InfluID = uuid.New().String()
 		tiData := p.convertTrafficInfluSubToTrafficInfluData(tiSub, afSub.NotifCorreID)
-		rspStatus, rspBody := p.Consumer().AppDataInfluenceDataPut(afSub.InfluID, tiData)
-		if rspStatus != http.StatusOK &&
-			rspStatus != http.StatusCreated &&
-			rspStatus != http.StatusNoContent {
-			c.JSON(rspStatus, rspBody)
+
+		_, pd, err := p.Consumer().AppDataInfluenceDataPut(afSub.InfluID, tiData)
+		switch {
+		case pd != nil:
+			c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
+			c.JSON(int(pd.Status), pd)
+			return
+		case err != nil:
+			problemDetails := &models.ProblemDetails{
+				Status: http.StatusInternalServerError,
+				Detail: "Query to UDR failed",
+			}
+			c.Set(sbi.IN_PB_DETAILS_CTX_STR, problemDetails.Cause)
+			c.JSON(int(problemDetails.Status), problemDetails)
 			return
 		}
 	} else {
 		// Invalid case. Return Error
 		pd := openapi.ProblemDetailsMalformedReqSyntax("Not individual UE case, nor group case")
+		c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
 		c.JSON(int(pd.Status), pd)
 		return
 	}
@@ -119,6 +153,10 @@ func (p *Processor) PostTrafficInfluenceSubscription(
 	c.JSON(http.StatusCreated, tiSub)
 }
 
+// GetIndividualTrafficInfluenceSubscription Read a subscription to traffic influence
+// 3GPP TS 29.522 Release 17 version 17.6.0
+// Resource structure: 5.4.1
+// Request/Response  : 5.4.1.3.3.2
 func (p *Processor) GetIndividualTrafficInfluenceSubscription(
 	c *gin.Context,
 	afID, subID string,
@@ -128,7 +166,8 @@ func (p *Processor) GetIndividualTrafficInfluenceSubscription(
 	af := p.Context().GetAf(afID)
 	if af == nil {
 		pd := openapi.ProblemDetailsDataNotFound("AF is not found")
-		c.JSON(http.StatusNotFound, pd)
+		c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
+		c.JSON(int(pd.Status), pd)
 		return
 	}
 
@@ -138,13 +177,18 @@ func (p *Processor) GetIndividualTrafficInfluenceSubscription(
 	afSub, ok := af.Subs[subID]
 	if !ok {
 		pd := openapi.ProblemDetailsDataNotFound("Subscription is not found")
-		c.JSON(http.StatusNotFound, pd)
+		c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
+		c.JSON(int(pd.Status), pd)
 		return
 	}
 
 	c.JSON(http.StatusOK, afSub.TiSub)
 }
 
+// PutIndividualTrafficInfluenceSubscription Modify all the properties of an existing subscription to traffic influence
+// 3GPP TS 29.522 Release 17 version 17.6.0
+// Resource structure: 5.4.1
+// Request/Response  : 5.4.1.3.3.3
 func (p *Processor) PutIndividualTrafficInfluenceSubscription(
 	c *gin.Context,
 	afID, subID string,
@@ -152,16 +196,18 @@ func (p *Processor) PutIndividualTrafficInfluenceSubscription(
 ) {
 	logger.TrafInfluLog.Infof("PutIndividualTrafficInfluenceSubscription - afID[%s], subID[%s]", afID, subID)
 
-	rsp := validateTrafficInfluenceData(tiSub)
-	if rsp != nil {
-		c.JSON(rsp.Status, rsp.Body)
+	problemDetails := validateTrafficInfluenceData(tiSub)
+	if problemDetails != nil {
+		c.Set(sbi.IN_PB_DETAILS_CTX_STR, problemDetails.Cause)
+		c.JSON(int(problemDetails.Status), problemDetails)
 		return
 	}
 
 	af := p.Context().GetAf(afID)
 	if af == nil {
 		pd := openapi.ProblemDetailsDataNotFound("AF is not found")
-		c.JSON(http.StatusNotFound, pd)
+		c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
+		c.JSON(int(pd.Status), pd)
 		return
 	}
 
@@ -171,30 +217,53 @@ func (p *Processor) PutIndividualTrafficInfluenceSubscription(
 	afSub, ok := af.Subs[subID]
 	if !ok {
 		pd := openapi.ProblemDetailsDataNotFound("Subscription is not found")
-		c.JSON(http.StatusNotFound, pd)
+		c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
+		c.JSON(int(pd.Status), pd)
 		return
 	}
 
 	afSub.TiSub = tiSub
 	if afSub.AppSessID != "" {
 		asc := p.convertTrafficInfluSubToAppSessionContext(tiSub, afSub.NotifCorreID)
-		rspStatus, rspBody, appSessID := p.Consumer().PostAppSessions(asc)
-		if rspStatus != http.StatusCreated {
-			c.JSON(rspStatus, rspBody)
+		appSessId, pd, err := p.Consumer().PostAppSessions(asc)
+
+		switch {
+		case pd != nil:
+			c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
+			c.JSON(int(pd.Status), pd)
 			return
+		case err != nil:
+			problemDetails := &models.ProblemDetails{
+				Status: http.StatusInternalServerError,
+				Detail: "Query to PCF failed",
+			}
+			c.Set(sbi.IN_PB_DETAILS_CTX_STR, problemDetails.Cause)
+			c.JSON(int(problemDetails.Status), problemDetails)
+			return
+		default:
+			afSub.AppSessID = appSessId
 		}
-		afSub.AppSessID = appSessID
 	} else if afSub.InfluID != "" {
 		tiData := p.convertTrafficInfluSubToTrafficInfluData(tiSub, afSub.NotifCorreID)
-		rspStatus, rspBody := p.Consumer().AppDataInfluenceDataPut(afSub.InfluID, tiData)
-		if rspStatus != http.StatusOK &&
-			rspStatus != http.StatusCreated &&
-			rspStatus != http.StatusNoContent {
-			c.JSON(rspStatus, rspBody)
+
+		_, pd, err := p.Consumer().AppDataInfluenceDataPut(afSub.InfluID, tiData)
+		switch {
+		case pd != nil:
+			c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
+			c.JSON(int(pd.Status), pd)
+			return
+		case err != nil:
+			problemDetails := &models.ProblemDetails{
+				Status: http.StatusInternalServerError,
+				Detail: "Query to UDR failed",
+			}
+			c.Set(sbi.IN_PB_DETAILS_CTX_STR, problemDetails.Cause)
+			c.JSON(int(problemDetails.Status), problemDetails)
 			return
 		}
 	} else {
 		pd := openapi.ProblemDetailsDataNotFound("No AppSessID or InfluID")
+		c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
 		c.JSON(int(pd.Status), pd)
 		return
 	}
@@ -202,6 +271,11 @@ func (p *Processor) PutIndividualTrafficInfluenceSubscription(
 	c.JSON(http.StatusOK, afSub.TiSub)
 }
 
+// PatchIndividualTrafficInfluenceSubscription Modify part of the properties of an existing subscription
+// to traffic influence
+// 3GPP TS 29.522 Release 17 version 17.6.0
+// Resource structure: 5.4.1
+// Request/Response  : 5.4.1.3.3.4
 func (p *Processor) PatchIndividualTrafficInfluenceSubscription(
 	c *gin.Context,
 	afID, subID string,
@@ -212,7 +286,8 @@ func (p *Processor) PatchIndividualTrafficInfluenceSubscription(
 	af := p.Context().GetAf(afID)
 	if af == nil {
 		pd := openapi.ProblemDetailsDataNotFound("AF is not found")
-		c.JSON(http.StatusNotFound, pd)
+		c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
+		c.JSON(int(pd.Status), pd)
 		return
 	}
 
@@ -222,24 +297,45 @@ func (p *Processor) PatchIndividualTrafficInfluenceSubscription(
 	afSub, ok := af.Subs[subID]
 	if !ok {
 		pd := openapi.ProblemDetailsDataNotFound("Subscription is not found")
-		c.JSON(http.StatusNotFound, pd)
+		c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
+		c.JSON(int(pd.Status), pd)
 		return
 	}
 
 	if afSub.AppSessID != "" {
 		ascUpdateData := p.convertTrafficInfluSubPatchToAppSessionContextUpdateData(tiSubPatch)
-		rspStatus, rspBody := p.Consumer().PatchAppSession(afSub.AppSessID, ascUpdateData)
-		if rspStatus != http.StatusOK &&
-			rspStatus != http.StatusNoContent {
-			c.JSON(rspStatus, rspBody)
+
+		_, pd, err := p.Consumer().PatchAppSession(afSub.AppSessID, ascUpdateData)
+		switch {
+		case pd != nil:
+			c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
+			c.JSON(int(pd.Status), pd)
+			return
+		case err != nil:
+			problemDetails := &models.ProblemDetails{
+				Status: http.StatusInternalServerError,
+				Detail: "Query to PCF failed",
+			}
+			c.Set(sbi.IN_PB_DETAILS_CTX_STR, problemDetails.Cause)
+			c.JSON(int(problemDetails.Status), problemDetails)
 			return
 		}
 	} else if afSub.InfluID != "" {
 		tiDataPatch := p.convertTrafficInfluSubPatchToTrafficInfluDataPatch(tiSubPatch)
-		rspStatus, rspBody := p.Consumer().AppDataInfluenceDataPatch(afSub.InfluID, tiDataPatch)
-		if rspStatus != http.StatusOK &&
-			rspStatus != http.StatusNoContent {
-			c.JSON(rspStatus, rspBody)
+		_, pd, err := p.Consumer().AppDataInfluenceDataPatch(afSub.InfluID, tiDataPatch)
+
+		switch {
+		case pd != nil:
+			c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
+			c.JSON(int(pd.Status), pd)
+			return
+		case err != nil:
+			problemDetails := &models.ProblemDetails{
+				Status: http.StatusInternalServerError,
+				Detail: "Query to UDR failed",
+			}
+			c.Set(sbi.IN_PB_DETAILS_CTX_STR, problemDetails.Cause)
+			c.JSON(int(problemDetails.Status), problemDetails)
 			return
 		}
 	} else {
@@ -252,6 +348,10 @@ func (p *Processor) PatchIndividualTrafficInfluenceSubscription(
 	c.JSON(http.StatusOK, afSub.TiSub)
 }
 
+// DeleteIndividualTrafficInfluenceSubscription Delete a subscription to traffic influence
+// 3GPP TS 29.522 Release 17 version 17.6.0
+// Resource structure: 5.4.1
+// Request/Response  : 5.4.1.3.3.5
 func (p *Processor) DeleteIndividualTrafficInfluenceSubscription(
 	c *gin.Context,
 	afID, subID string,
@@ -261,7 +361,8 @@ func (p *Processor) DeleteIndividualTrafficInfluenceSubscription(
 	af := p.Context().GetAf(afID)
 	if af == nil {
 		pd := openapi.ProblemDetailsDataNotFound("AF is not found")
-		c.JSON(http.StatusNotFound, pd)
+		c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
+		c.JSON(int(pd.Status), pd)
 		return
 	}
 
@@ -271,22 +372,40 @@ func (p *Processor) DeleteIndividualTrafficInfluenceSubscription(
 	sub, ok := af.Subs[subID]
 	if !ok {
 		pd := openapi.ProblemDetailsDataNotFound("Subscription is not found")
-		c.JSON(http.StatusNotFound, pd)
+		c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
+		c.JSON(int(pd.Status), pd)
 		return
 	}
 
 	if sub.AppSessID != "" {
-		rspStatus, rspBody := p.Consumer().DeleteAppSession(sub.AppSessID)
-		if rspStatus != http.StatusOK &&
-			rspStatus != http.StatusNoContent {
-			c.JSON(rspStatus, rspBody)
+		_, pd, err := p.Consumer().DeleteAppSession(sub.AppSessID)
+		switch {
+		case err != nil:
+			problemDetails := &models.ProblemDetails{
+				Status: http.StatusInternalServerError,
+				Detail: "Query to PCF failed",
+			}
+			c.JSON(int(problemDetails.Status), problemDetails)
+			return
+		case pd != nil:
+			c.JSON(int(pd.Status), pd)
 			return
 		}
 	} else {
-		rspStatus, rspBody := p.Consumer().AppDataInfluenceDataDelete(sub.InfluID)
-		if rspStatus != http.StatusOK &&
-			rspStatus != http.StatusNoContent {
-			c.JSON(rspStatus, rspBody)
+		pd, errInfluenceDataDelete := p.Consumer().AppDataInfluenceDataDelete(sub.InfluID)
+
+		switch {
+		case pd != nil:
+			c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
+			c.JSON(int(pd.Status), pd)
+			return
+		case errInfluenceDataDelete != nil:
+			problemDetails := &models.ProblemDetails{
+				Status: http.StatusInternalServerError,
+				Detail: "Query to UDR failed",
+			}
+			c.Set(sbi.IN_PB_DETAILS_CTX_STR, problemDetails.Cause)
+			c.JSON(int(problemDetails.Status), problemDetails)
 			return
 		}
 	}
@@ -296,7 +415,7 @@ func (p *Processor) DeleteIndividualTrafficInfluenceSubscription(
 
 func validateTrafficInfluenceData(
 	tiSub *models.NefTrafficInfluSub,
-) *HandlerResponse {
+) *models.ProblemDetails {
 	// TS29.522: One of "afAppId", "trafficFilters" or "ethTrafficFilters" shall be included.
 	if tiSub.AfAppId == "" &&
 		len(tiSub.TrafficFilters) == 0 &&
@@ -304,7 +423,7 @@ func validateTrafficInfluenceData(
 		pd := openapi.
 			ProblemDetailsMalformedReqSyntax(
 				"Missing one of afAppId, trafficFilters or ethTrafficFilters")
-		return &HandlerResponse{int(pd.Status), nil, pd}
+		return pd
 	}
 
 	// TS29.522: One of individual UE identifier
@@ -319,7 +438,7 @@ func validateTrafficInfluenceData(
 		pd := openapi.
 			ProblemDetailsMalformedReqSyntax(
 				"Missing one of Gpsi, Ipv4Addr, Ipv6Addr, ExternalGroupId, AnyUeInd")
-		return &HandlerResponse{int(pd.Status), nil, pd}
+		return pd
 	}
 	return nil
 }

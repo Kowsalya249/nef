@@ -1,15 +1,15 @@
 package consumer
 
 import (
+	"fmt"
 	"net/http"
-	"reflect"
 	"sync"
 
-	// "github.com/free5gc/openapi/Nudr_DataRepository"
 	"github.com/free5gc/openapi"
 	"github.com/free5gc/openapi/models"
 	"github.com/free5gc/openapi/nrf/NFDiscovery"
 	"github.com/free5gc/openapi/udr/DataRepository"
+	sbi_metrics "github.com/free5gc/util/metrics/sbi"
 )
 
 type nudrService struct {
@@ -19,23 +19,31 @@ type nudrService struct {
 	clients map[string]*DataRepository.APIClient
 }
 
-func (s *nudrService) getClient(uri string) *DataRepository.APIClient {
+func (s *nudrService) getDataRepositoryClient(uri string) *DataRepository.APIClient {
+	if uri == "" {
+		return nil
+	}
+
 	s.mu.RLock()
-	if client, ok := s.clients[uri]; ok {
+
+	client, ok := s.clients[uri]
+
+	if ok {
 		defer s.mu.RUnlock()
 		return client
-	} else {
-		configuration := DataRepository.NewConfiguration()
-		configuration.SetBasePath(uri)
-		configuration.SetHTTPClient(http.DefaultClient)
-		cli := DataRepository.NewAPIClient(configuration)
-
-		s.mu.RUnlock()
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.clients[uri] = cli
-		return cli
 	}
+
+	configuration := DataRepository.NewConfiguration()
+	configuration.SetBasePath(uri)
+	configuration.SetMetrics(sbi_metrics.SbiMetricHook)
+	configuration.SetHTTPClient(http.DefaultClient)
+	client = DataRepository.NewAPIClient(configuration)
+
+	s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clients[uri] = client
+	return client
 }
 
 func (s *nudrService) getUdrDrUri() (string, error) {
@@ -56,362 +64,409 @@ func (s *nudrService) getUdrDrUri() (string, error) {
 	return uri, nil
 }
 
-func (s *nudrService) AppDataInfluenceDataGet(influenceIDs []string) (int, interface{}) {
-	var (
-		err     error
-		rspCode int
-		rspBody interface{}
-		result  *DataRepository.ReadInfluenceDataResponse
-	)
-
+// AppDataInfluenceDataGet Query the UDR to retrieve models.TrafficInfluData for each matching combination
+// of the values of the elements of the array given in parameters.
+// 3GPP TS 29.519 release 17 version 17.6.0
+// Resource structure: 6.2.2
+// Request/Response: 6.2.5.3.1
+func (s *nudrService) AppDataInfluenceDataGet(influenceIDs []string) (
+	[]models.TrafficInfluData, *models.ProblemDetails, error,
+) {
 	uri, err := s.getUdrDrUri()
 	if err != nil {
-		return rspCode, rspBody
-	}
-	client := s.getClient(uri)
-
-	ctx, _, err := s.consumer.Context().GetTokenCtx(models.ServiceName_NUDR_DR, models.NrfNfManagementNfType_UDR)
-	if err != nil {
-		return rspCode, rspBody
+		return nil, nil, err
 	}
 
-	readInfluenceDataReq := &DataRepository.ReadInfluenceDataRequest{
+	client := s.getDataRepositoryClient(uri)
+
+	if client == nil {
+		return nil, nil, fmt.Errorf("could not initialize the DataRepository client")
+	}
+
+	param := DataRepository.ReadInfluenceDataRequest{
 		InfluenceIds: influenceIDs,
 	}
-	result, err = client.InfluenceDataStoreApi.ReadInfluenceData(ctx, readInfluenceDataReq)
-	if err != nil {
-		return handleAPIServiceNoResponse(err)
-	}
-
-	if result == nil || reflect.DeepEqual(result.TrafficInfluData, []models.TrafficInfluData{}) {
-		return http.StatusNoContent, nil
-	}
-
-	return http.StatusOK, result.TrafficInfluData
-}
-
-func (s *nudrService) AppDataInfluenceDataIdGet(influenceID string) (int, interface{}) {
-	var (
-		err     error
-		rspCode int
-		rspBody interface{}
-		result  *DataRepository.ReadInfluenceDataResponse
-	)
-
-	uri, err := s.getUdrDrUri()
-	if err != nil {
-		return rspCode, rspBody
-	}
-	client := s.getClient(uri)
 
 	ctx, _, err := s.consumer.Context().GetTokenCtx(models.ServiceName_NUDR_DR, models.NrfNfManagementNfType_UDR)
 	if err != nil {
-		return rspCode, rspBody
+		return nil, nil, err
 	}
 
-	readInfluenceDataReq := &DataRepository.ReadInfluenceDataRequest{
-		InfluenceIds: []string{influenceID},
-	}
-	result, err = client.InfluenceDataStoreApi.ReadInfluenceData(ctx, readInfluenceDataReq)
+	influenceDataRsp, influenceDataErr := client.InfluenceDataStoreApi.ReadInfluenceData(ctx, &param)
 
-	if result != nil {
-		rspCode = http.StatusOK
-		rspBody = result.TrafficInfluData
-	} else {
-		rspCode, rspBody = handleAPIServiceNoResponse(err)
+	if influenceDataErr != nil {
+		switch apiErr := influenceDataErr.(type) {
+		// API error
+		case openapi.GenericOpenAPIError:
+			switch errorModel := apiErr.Model().(type) {
+			case DataRepository.ReadInfluenceDataError:
+				return nil, &errorModel.ProblemDetails, nil
+			case error:
+				return nil, openapi.ProblemDetailsSystemFailure(errorModel.Error()), nil
+			default:
+				return nil, nil, openapi.ReportError("openapi error")
+			}
+		case error:
+			return nil, openapi.ProblemDetailsSystemFailure(apiErr.Error()), nil
+		default:
+			return nil, nil, openapi.ReportError("server no response")
+		}
 	}
 
-	return rspCode, rspBody
+	return influenceDataRsp.TrafficInfluData, nil, nil
 }
 
+// AppDataInfluenceDataPut Stores the models.TrafficInfluData for the related influenceID.
+// 3GPP TS 29.519 release 17 version 17.6.0
+// Resource structure: 6.2.2
+// Request/Response: 6.2.6.3.1
 func (s *nudrService) AppDataInfluenceDataPut(influenceID string,
 	tiData *models.TrafficInfluData,
-) (int, interface{}) {
-	var (
-		err     error
-		rspCode int
-		rspBody interface{}
-		result  *DataRepository.CreateOrReplaceIndividualInfluenceDataResponse
-	)
-
+) (*models.TrafficInfluData, *models.ProblemDetails, error) {
 	uri, err := s.getUdrDrUri()
 	if err != nil {
-		return rspCode, rspBody
+		return nil, nil, err
 	}
-	client := s.getClient(uri)
+
+	client := s.getDataRepositoryClient(uri)
+
+	if client == nil {
+		return nil, nil, openapi.ReportError("could not initialize the DataRepository client")
+	}
 
 	ctx, _, err := s.consumer.Context().GetTokenCtx(models.ServiceName_NUDR_DR, models.NrfNfManagementNfType_UDR)
 	if err != nil {
-		return rspCode, rspBody
+		return nil, nil, err
 	}
 
-	putInfluenceDataReq := &DataRepository.CreateOrReplaceIndividualInfluenceDataRequest{
+	influenceDataReq := DataRepository.CreateOrReplaceIndividualInfluenceDataRequest{
 		InfluenceId:      &influenceID,
 		TrafficInfluData: tiData,
 	}
 
-	result, err = client.IndividualInfluenceDataDocumentApi.CreateOrReplaceIndividualInfluenceData(
-		ctx, putInfluenceDataReq)
+	influenceDataResp, errInfluenceData := client.IndividualInfluenceDataDocumentApi.
+		CreateOrReplaceIndividualInfluenceData(ctx, &influenceDataReq)
 
-	if result != nil {
-		if result.Location != "" {
-			rspCode = http.StatusCreated
-		} else if reflect.DeepEqual(result.TrafficInfluData, models.TrafficInfluData{}) {
-			rspCode = http.StatusNoContent
-		} else {
-			rspCode = http.StatusOK
+	if errInfluenceData != nil {
+		switch apiErr := errInfluenceData.(type) {
+		// API error
+		case openapi.GenericOpenAPIError:
+			switch errorModel := apiErr.Model().(type) {
+			case DataRepository.CreateOrReplaceIndividualInfluenceDataError:
+
+				return nil, &errorModel.ProblemDetails, nil
+			case error:
+				return nil, openapi.ProblemDetailsSystemFailure(errorModel.Error()), nil
+			default:
+				return nil, nil, openapi.ReportError("openapi error")
+			}
+		case error:
+			return nil, openapi.ProblemDetailsSystemFailure(apiErr.Error()), nil
+		default:
+			return nil, nil, openapi.ReportError("server no response")
 		}
-		rspBody = result.TrafficInfluData
-	} else {
-		rspCode, rspBody = handleAPIServiceNoResponse(err)
 	}
 
-	return rspCode, rspBody
+	return &influenceDataResp.TrafficInfluData, nil, nil
 }
 
-func (s *nudrService) AppDataInfluenceDataPatch(
-	influenceID string, tiSubPatch *models.TrafficInfluDataPatch,
-) (int, interface{}) {
-	var (
-		err     error
-		rspCode int
-		rspBody interface{}
-		result  *DataRepository.UpdateIndividualInfluenceDataResponse
-	)
-
+// AppDataPfdsGet Retrieve PFDs for related application identifier(s).
+// 3GPP TS 29.519 release 17 version 17.6.0
+// Resource structure: 6.2.2
+// Request/Response: 6.2.3.3.1
+func (s *nudrService) AppDataPfdsGet(appIDs []string) ([]models.PfdDataForAppExt, *models.ProblemDetails, error) {
 	uri, err := s.getUdrDrUri()
 	if err != nil {
-		return rspCode, rspBody
+		return nil, nil, err
 	}
-	client := s.getClient(uri)
+
+	client := s.getDataRepositoryClient(uri)
+
+	if client == nil {
+		return nil, nil, openapi.ReportError("could not initialize the DataRepository client")
+	}
 
 	ctx, _, err := s.consumer.Context().GetTokenCtx(models.ServiceName_NUDR_DR, models.NrfNfManagementNfType_UDR)
 	if err != nil {
-		return rspCode, rspBody
+		return nil, nil, err
 	}
 
-	patchInfluenceDataReq := &DataRepository.UpdateIndividualInfluenceDataRequest{
-		InfluenceId:           &influenceID,
-		TrafficInfluDataPatch: tiSubPatch,
-	}
-	result, err = client.IndividualInfluenceDataDocumentApi.UpdateIndividualInfluenceData(ctx, patchInfluenceDataReq)
-
-	if result != nil {
-		if reflect.DeepEqual(result.TrafficInfluData, models.TrafficInfluData{}) {
-			rspCode = http.StatusNoContent
-			rspBody = nil
-		} else {
-			rspCode = http.StatusOK
-			rspBody = result.TrafficInfluData
-		}
-	} else {
-		rspCode, rspBody = handleAPIServiceNoResponse(err)
-	}
-
-	return rspCode, rspBody
-}
-
-func (s *nudrService) AppDataInfluenceDataDelete(influenceID string) (int, interface{}) {
-	var (
-		err     error
-		rspCode int
-		rspBody interface{}
-		result  *DataRepository.DeleteIndividualInfluenceDataResponse
-	)
-
-	uri, err := s.getUdrDrUri()
-	if err != nil {
-		return rspCode, rspBody
-	}
-	client := s.getClient(uri)
-
-	ctx, _, err := s.consumer.Context().GetTokenCtx(models.ServiceName_NUDR_DR, models.NrfNfManagementNfType_UDR)
-	if err != nil {
-		return rspCode, rspBody
-	}
-
-	deleteInfluenceDataReq := &DataRepository.DeleteIndividualInfluenceDataRequest{
-		InfluenceId: &influenceID,
-	}
-	result, err = client.IndividualInfluenceDataDocumentApi.
-		DeleteIndividualInfluenceData(ctx, deleteInfluenceDataReq)
-
-	if result != nil {
-		rspCode = http.StatusNoContent
-		rspBody = nil
-	} else {
-		rspCode, rspBody = handleAPIServiceNoResponse(err)
-	}
-
-	return rspCode, rspBody
-}
-
-// TS 29.519 v15.3.0 6.2.3.3.1
-func (s *nudrService) AppDataPfdsGet(appIDs []string) (int, interface{}) {
-	var (
-		err     error
-		rspCode int
-		rspBody interface{}
-		result  *DataRepository.ReadPFDDataResponse
-	)
-
-	uri, err := s.getUdrDrUri()
-	if err != nil {
-		return rspCode, rspBody
-	}
-	client := s.getClient(uri)
-
-	ctx, _, err := s.consumer.Context().GetTokenCtx(models.ServiceName_NUDR_DR, models.NrfNfManagementNfType_UDR)
-	if err != nil {
-		return rspCode, rspBody
-	}
-
-	readPfdDataReq := &DataRepository.ReadPFDDataRequest{
+	pfdDataReq := DataRepository.ReadPFDDataRequest{
 		AppId: appIDs,
 	}
-	result, err = client.PFDDataStoreApi.ReadPFDData(ctx, readPfdDataReq)
 
-	if err == nil && result != nil {
-		rspCode = http.StatusOK
-		rspBody = &result.PfdDataForAppExt
-		return rspCode, rspBody
-	}
+	pfdDataResp, errPfdData := client.PFDDataStoreApi.ReadPFDData(ctx, &pfdDataReq)
 
-	if err != nil {
-		if apiErr, ok := err.(openapi.GenericOpenAPIError); ok {
-			if pd, ok := apiErr.ErrorModel.(DataRepository.ReadPFDDataError); ok {
-				rspCode = int(pd.ProblemDetails.Status)
-				rspBody = &pd.ProblemDetails
-				return rspCode, rspBody
+	if errPfdData != nil {
+		switch apiErr := errPfdData.(type) {
+		// API error
+		case openapi.GenericOpenAPIError:
+			switch errorModel := apiErr.Model().(type) {
+			case DataRepository.ReadPFDDataError:
+				return nil, &errorModel.ProblemDetails, nil
+			case error:
+				return nil, openapi.ProblemDetailsSystemFailure(errorModel.Error()), nil
+			default:
+				return nil, nil, openapi.ReportError("openapi error")
 			}
+		case error:
+			return nil, openapi.ProblemDetailsSystemFailure(apiErr.Error()), nil
+		default:
+			return nil, nil, openapi.ReportError("server no response")
 		}
 	}
 
-	rspCode, rspBody = handleAPIServiceNoResponse(err)
-	return rspCode, rspBody
+	return pfdDataResp.PfdDataForAppExt, nil, nil
 }
 
-// TS 29.519 v15.3.0 6.2.4.3.3
-func (s *nudrService) AppDataPfdsAppIdPut(appID string, pfdDataForApp *models.PfdDataForAppExt) (int, interface{}) {
-	var (
-		err     error
-		rspCode int
-		rspBody interface{}
-		result  *DataRepository.CreateOrReplaceIndividualPFDDataResponse
-	)
-
+// AppDataPfdsAppIdPut Creates, updates an individual PFD given an appId and the content to store into the UDR.
+// 3GPP TS 29.519 release 17 version 17.6.0
+// Resource structure: 6.2.2
+// Request/Response: 6.2.4.3.3
+func (s *nudrService) AppDataPfdsAppIdPut(appID string, pfdDataForApp *models.PfdDataForAppExt) (
+	*models.PfdDataForAppExt, *models.ProblemDetails, error,
+) {
 	uri, err := s.getUdrDrUri()
 	if err != nil {
-		return rspCode, rspBody
+		return nil, nil, err
 	}
-	client := s.getClient(uri)
+
+	client := s.getDataRepositoryClient(uri)
+
+	if client == nil {
+		return nil, nil, openapi.ReportError("could not initialize the DataRepository client")
+	}
 
 	ctx, _, err := s.consumer.Context().GetTokenCtx(models.ServiceName_NUDR_DR, models.NrfNfManagementNfType_UDR)
 	if err != nil {
-		return rspCode, rspBody
+		return nil, nil, err
 	}
 
-	putPfdDataReq := &DataRepository.CreateOrReplaceIndividualPFDDataRequest{
+	individualPfdDataReq := DataRepository.CreateOrReplaceIndividualPFDDataRequest{
 		AppId:            &appID,
 		PfdDataForAppExt: pfdDataForApp,
 	}
-	result, err = client.IndividualPFDDataDocumentApi.CreateOrReplaceIndividualPFDData(ctx, putPfdDataReq)
 
-	if result != nil {
-		if reflect.DeepEqual(result.PfdDataForAppExt, models.PfdDataForAppExt{}) {
-			rspCode = http.StatusNoContent
-			rspBody = nil
-		} else if result.Location != "" {
-			rspCode = http.StatusCreated
-			rspBody = &result.PfdDataForAppExt
-		} else {
-			rspCode = http.StatusOK
-			rspBody = &result.PfdDataForAppExt
-		}
-	} else {
-		rspCode, rspBody = handleAPIServiceNoResponse(err)
-	}
+	individualPfdDataRsp, errIndividualPfdData := client.IndividualPFDDataDocumentApi.
+		CreateOrReplaceIndividualPFDData(ctx, &individualPfdDataReq)
 
-	return rspCode, rspBody
-}
-
-// TS 29.519 v15.3.0 6.2.4.3.2
-func (s *nudrService) AppDataPfdsAppIdDelete(appID string) (int, interface{}) {
-	var (
-		err     error
-		rspCode int
-		rspBody interface{}
-		result  *DataRepository.DeleteIndividualPFDDataResponse
-	)
-
-	uri, err := s.getUdrDrUri()
-	if err != nil {
-		return rspCode, rspBody
-	}
-	client := s.getClient(uri)
-
-	ctx, _, err := s.consumer.Context().GetTokenCtx(models.ServiceName_NUDR_DR, models.NrfNfManagementNfType_UDR)
-	if err != nil {
-		return rspCode, rspBody
-	}
-
-	deletePfdDataReq := &DataRepository.DeleteIndividualPFDDataRequest{
-		AppId: &appID,
-	}
-	result, err = client.IndividualPFDDataDocumentApi.DeleteIndividualPFDData(ctx, deletePfdDataReq)
-
-	if result != nil {
-		rspCode = http.StatusNoContent
-		rspBody = nil
-	} else {
-		// API Service Internal Error or Server No Response
-		rspCode, rspBody = handleAPIServiceNoResponse(err)
-	}
-
-	return rspCode, rspBody
-}
-
-// TS 29.519 v15.3.0 6.2.4.3.1
-func (s *nudrService) AppDataPfdsAppIdGet(appID string) (int, interface{}) {
-	var (
-		err     error
-		rspCode int
-		rspBody interface{}
-		result  *DataRepository.ReadIndividualPFDDataResponse
-	)
-
-	uri, err := s.getUdrDrUri()
-	if err != nil {
-		return rspCode, rspBody
-	}
-	client := s.getClient(uri)
-
-	ctx, _, err := s.consumer.Context().GetTokenCtx(models.ServiceName_NUDR_DR, models.NrfNfManagementNfType_UDR)
-	if err != nil {
-		return rspCode, rspBody
-	}
-
-	readPfdDataReq := &DataRepository.ReadIndividualPFDDataRequest{
-		AppId: &appID,
-	}
-	result, err = client.IndividualPFDDataDocumentApi.ReadIndividualPFDData(ctx, readPfdDataReq)
-
-	if err == nil && result != nil {
-		rspCode = http.StatusOK
-		rspBody = &result.PfdDataForAppExt
-		return rspCode, rspBody
-	}
-
-	if err != nil {
-		if apiErr, ok := err.(openapi.GenericOpenAPIError); ok {
-			if pd, ok := apiErr.ErrorModel.(DataRepository.ReadIndividualPFDDataError); ok {
-				rspCode = int(pd.ProblemDetails.Status)
-				rspBody = &pd.ProblemDetails
-				return rspCode, rspBody
+	if errIndividualPfdData != nil {
+		switch apiErr := errIndividualPfdData.(type) {
+		// API error
+		case openapi.GenericOpenAPIError:
+			switch errorModel := apiErr.Model().(type) {
+			case DataRepository.CreateOrReplaceIndividualPFDDataError:
+				return nil, &errorModel.ProblemDetails, nil
+			case error:
+				return nil, openapi.ProblemDetailsSystemFailure(errorModel.Error()), nil
+			default:
+				return nil, nil, openapi.ReportError("openapi error")
 			}
+		case error:
+			return nil, openapi.ProblemDetailsSystemFailure(apiErr.Error()), nil
+		default:
+			return nil, nil, openapi.ReportError("server no response")
 		}
 	}
 
-	rspCode, rspBody = handleAPIServiceNoResponse(err)
-	return rspCode, rspBody
+	return &individualPfdDataRsp.PfdDataForAppExt, nil, nil
+}
+
+// AppDataPfdsAppIdDelete Deletes the individual PFD Data resource related to the application identifier.
+// 3GPP TS 29.519 release 17 version 17.6.0
+// Resource structure: 6.2.2
+// Request/Response: 6.2.4.3.2
+func (s *nudrService) AppDataPfdsAppIdDelete(appID string) (*models.ProblemDetails, error) {
+	uri, err := s.getUdrDrUri()
+	if err != nil {
+		return nil, err
+	}
+
+	client := s.getDataRepositoryClient(uri)
+
+	if client == nil {
+		return nil, openapi.ReportError("could not initialize the DataRepository client")
+	}
+
+	ctx, _, err := s.consumer.Context().GetTokenCtx(models.ServiceName_NUDR_DR, models.NrfNfManagementNfType_UDR)
+	if err != nil {
+		return nil, err
+	}
+
+	DeletePdfDataReq := DataRepository.DeleteIndividualPFDDataRequest{
+		AppId: &appID,
+	}
+
+	_, errDeletePfdData := client.IndividualPFDDataDocumentApi.DeleteIndividualPFDData(ctx, &DeletePdfDataReq)
+
+	if errDeletePfdData != nil {
+		switch apiErr := errDeletePfdData.(type) {
+		// API error
+		case openapi.GenericOpenAPIError:
+			switch errorModel := apiErr.Model().(type) {
+			case DataRepository.DeleteIndividualPFDDataError:
+				return &errorModel.ProblemDetails, nil
+			case error:
+				return openapi.ProblemDetailsSystemFailure(errorModel.Error()), nil
+			default:
+				return nil, openapi.ReportError("openapi error")
+			}
+		case error:
+			return openapi.ProblemDetailsSystemFailure(apiErr.Error()), nil
+		default:
+			return nil, openapi.ReportError("server no response")
+		}
+	}
+	return nil, nil
+}
+
+// AppDataPfdsAppIdGet Returns a representation of PFDs for the related applicationID.
+// 3GPP TS 29.519 release 17 version 17.6.0
+// Resource structure: 6.2.2
+// Request/Response: 6.2.4.3.1
+func (s *nudrService) AppDataPfdsAppIdGet(appID string) (
+	*DataRepository.ReadIndividualPFDDataResponse, *models.ProblemDetails, error,
+) {
+	uri, err := s.getUdrDrUri()
+	if err != nil {
+		return nil, nil, err
+	}
+	client := s.getDataRepositoryClient(uri)
+
+	if client == nil {
+		return nil, nil, openapi.ReportError("could not initialize the DataRepository client")
+	}
+
+	ctx, _, err := s.consumer.Context().GetTokenCtx(models.ServiceName_NUDR_DR, models.NrfNfManagementNfType_UDR)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	pfdDataReq := DataRepository.ReadIndividualPFDDataRequest{
+		AppId: &appID,
+	}
+
+	pfdData, errPfdData := client.IndividualPFDDataDocumentApi.ReadIndividualPFDData(ctx, &pfdDataReq)
+
+	if errPfdData != nil {
+		switch apiErr := errPfdData.(type) {
+		// API error
+		case openapi.GenericOpenAPIError:
+			switch errorModel := apiErr.Model().(type) {
+			case DataRepository.ReadIndividualPFDDataError:
+				return nil, &errorModel.ProblemDetails, nil
+			case error:
+				return nil, openapi.ProblemDetailsSystemFailure(errorModel.Error()), nil
+			default:
+				return nil, nil, openapi.ReportError("openapi error")
+			}
+		case error:
+			return nil, openapi.ProblemDetailsSystemFailure(apiErr.Error()), nil
+		default:
+			return nil, nil, openapi.ReportError("server no response")
+		}
+	}
+	return pfdData, nil, nil
+}
+
+// AppDataInfluenceDataPatch Patch the TrafficInfluData for the related influenceID and tiSubPatch and returns it.
+// 3GPP TS 29.519 release 17 version 17.6.0
+// Resource structure: 6.2.2
+// Request/Response: 6.2.6.3.2
+func (s *nudrService) AppDataInfluenceDataPatch(
+	influenceID string, tiSubPatch *models.TrafficInfluDataPatch,
+) (*models.TrafficInfluData, *models.ProblemDetails, error) {
+	uri, err := s.getUdrDrUri()
+	if err != nil {
+		return nil, nil, err
+	}
+	client := s.getDataRepositoryClient(uri)
+
+	ctx, _, err := s.consumer.Context().GetTokenCtx(models.ServiceName_NUDR_DR, models.NrfNfManagementNfType_UDR)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	tiDataReq := DataRepository.UpdateIndividualInfluenceDataRequest{
+		InfluenceId:           &influenceID,
+		TrafficInfluDataPatch: tiSubPatch,
+	}
+
+	trafficDataRsp, errTiData := client.IndividualInfluenceDataDocumentApi.UpdateIndividualInfluenceData(ctx, &tiDataReq)
+
+	if errTiData != nil {
+		switch apiErr := errTiData.(type) {
+		// API error
+		case openapi.GenericOpenAPIError:
+			switch errorModel := apiErr.Model().(type) {
+			case DataRepository.UpdateIndividualInfluenceDataError:
+				return nil, &errorModel.ProblemDetails, nil
+			case error:
+				return nil, openapi.ProblemDetailsSystemFailure(errorModel.Error()), nil
+			default:
+				return nil, nil, openapi.ReportError("openapi error")
+			}
+		case error:
+			return nil, openapi.ProblemDetailsSystemFailure(apiErr.Error()), nil
+		default:
+			return nil, nil, openapi.ReportError("server no response")
+		}
+	}
+
+	var trafficInfluData *models.TrafficInfluData
+
+	if trafficDataRsp != nil {
+		trafficInfluData = &trafficDataRsp.TrafficInfluData
+	}
+
+	return trafficInfluData, nil, nil
+}
+
+// AppDataInfluenceDataDelete Deletes the TrafficInfluenceData for the related influenceID.
+// 3GPP TS 29.519 release 17 version 17.6.0
+// Resource structure: 6.2.2
+// Request/Response: 6.2.6.3.3
+func (s *nudrService) AppDataInfluenceDataDelete(influenceID string) (*models.ProblemDetails, error) {
+	uri, err := s.getUdrDrUri()
+	if err != nil {
+		return nil, err
+	}
+	client := s.getDataRepositoryClient(uri)
+
+	if client == nil {
+		return nil, openapi.ReportError("could not initialize the DataRepository client")
+	}
+
+	ctx, _, err := s.consumer.Context().GetTokenCtx(models.ServiceName_NUDR_DR, models.NrfNfManagementNfType_UDR)
+	if err != nil {
+		return nil, err
+	}
+
+	deleteInfluenceReq := DataRepository.DeleteIndividualInfluenceDataRequest{
+		InfluenceId: &influenceID,
+	}
+
+	_, errDeleteInfluenceData := client.IndividualInfluenceDataDocumentApi.
+		DeleteIndividualInfluenceData(ctx, &deleteInfluenceReq)
+
+	if errDeleteInfluenceData != nil {
+		switch apiErr := errDeleteInfluenceData.(type) {
+		// API error
+		case openapi.GenericOpenAPIError:
+			switch errorModel := apiErr.Model().(type) {
+			case DataRepository.DeleteIndividualInfluenceDataError:
+				return &errorModel.ProblemDetails, nil
+			case error:
+				return openapi.ProblemDetailsSystemFailure(errorModel.Error()), nil
+			default:
+				return nil, openapi.ReportError("openapi error")
+			}
+		case error:
+			return openapi.ProblemDetailsSystemFailure(apiErr.Error()), nil
+		default:
+			return nil, openapi.ReportError("server no response")
+		}
+	}
+
+	return nil, nil
 }
