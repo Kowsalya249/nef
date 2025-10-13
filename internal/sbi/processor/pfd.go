@@ -151,7 +151,7 @@ func (p *Processor) DeletePFDManagementTransactions(c *gin.Context, scsAsID stri
 
 	// TODO: Remove AfCtx if its subscriptions and transactions are both empty
 
-	c.JSON(http.StatusNoContent, nil)
+	c.Status(http.StatusNoContent)
 }
 
 func (p *Processor) GetIndividualPFDManagementTransaction(

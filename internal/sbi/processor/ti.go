@@ -291,7 +291,7 @@ func (p *Processor) DeleteIndividualTrafficInfluenceSubscription(
 		}
 	}
 	delete(af.Subs, subID)
-	c.JSON(http.StatusNoContent, nil)
+	c.Status(http.StatusNoContent)
 }
 
 func validateTrafficInfluenceData(
