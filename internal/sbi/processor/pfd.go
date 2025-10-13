@@ -314,7 +314,7 @@ func (p *Processor) DeleteIndividualPFDManagementTransaction(
 
 	// TODO: Remove AfCtx if its subscriptions and transactions are both empty
 
-	c.JSON(http.StatusNoContent, nil)
+	c.Status(http.StatusNoContent)
 }
 
 func (p *Processor) GetIndividualApplicationPFDManagement(
@@ -405,7 +405,7 @@ func (p *Processor) DeleteIndividualApplicationPFDManagement(
 
 	// TODO: Remove AfCtx if its subscriptions and transactions are both empty
 
-	c.JSON(http.StatusNoContent, nil)
+	c.Status(http.StatusNoContent)
 }
 
 func (p *Processor) PutIndividualApplicationPFDManagement(
