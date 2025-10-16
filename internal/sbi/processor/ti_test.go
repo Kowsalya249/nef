@@ -442,6 +442,7 @@ func TestDeleteIndividualTrafficInfluenceSubscription(t *testing.T) {
 			c, _ := gin.CreateTestContext(httpRecorder)
 
 			nefApp.Processor().DeleteIndividualTrafficInfluenceSubscription(c, tc.afID, tc.subID)
+			c.Writer.WriteHeaderNow()
 			require.Equal(t, tc.expectedResponse.Status, httpRecorder.Code)
 
 			assertJSONBodyEqual(t, tc.expectedResponse.Body, httpRecorder.Body.Bytes())
