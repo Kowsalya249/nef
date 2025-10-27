@@ -269,6 +269,7 @@ func TestDeletePFDManagementTransactions(t *testing.T) {
 			c, _ := gin.CreateTestContext(httpRecorder)
 
 			nefApp.Processor().DeletePFDManagementTransactions(c, tc.afID)
+			c.Writer.WriteHeaderNow()
 			require.Equal(t, tc.expectedResponse.Status, httpRecorder.Code)
 
 			assertJSONBodyEqual(t, tc.expectedResponse.Body, httpRecorder.Body.Bytes())
@@ -503,6 +504,7 @@ func TestDeleteIndividualPFDManagementTransaction(t *testing.T) {
 			c, _ := gin.CreateTestContext(httpRecorder)
 
 			nefApp.Processor().DeleteIndividualPFDManagementTransaction(c, tc.afID, tc.transID)
+			c.Writer.WriteHeaderNow()
 			require.Equal(t, tc.expectedResponse.Status, httpRecorder.Code)
 
 			assertJSONBodyEqual(t, tc.expectedResponse.Body, httpRecorder.Body.Bytes())
@@ -740,6 +742,7 @@ func TestDeleteIndividualApplicationPFDManagement(t *testing.T) {
 			c, _ := gin.CreateTestContext(httpRecorder)
 
 			nefApp.Processor().DeleteIndividualApplicationPFDManagement(c, tc.afID, tc.transID, tc.appID)
+			c.Writer.WriteHeaderNow()
 			require.Equal(t, tc.expectedResponse.Status, httpRecorder.Code)
 
 			assertJSONBodyEqual(t, tc.expectedResponse.Body, httpRecorder.Body.Bytes())

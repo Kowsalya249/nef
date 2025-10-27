@@ -151,6 +151,7 @@ func TestDeleteIndividualPFDSubscription(t *testing.T) {
 			c, _ := gin.CreateTestContext(httpRecorder)
 
 			nefApp.Processor().DeleteIndividualPFDSubscription(c, tc.subscriptionID)
+			c.Writer.WriteHeaderNow()
 			require.Equal(t, tc.expectedResponse.Status, httpRecorder.Code)
 
 			assertJSONBodyEqual(t, tc.expectedResponse.Body, httpRecorder.Body.Bytes())

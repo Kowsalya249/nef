@@ -60,7 +60,7 @@ func (p *Processor) DeleteIndividualPFDSubscription(c *gin.Context, subID string
 		return
 	}
 
-	c.JSON(http.StatusNoContent, nil)
+	c.Status(http.StatusNoContent)
 }
 
 func (p *Processor) genPfdSubscriptionURI(subID string) string {
