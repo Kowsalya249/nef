@@ -12,6 +12,7 @@ import (
 	// "github.com/free5gc/openapi/Nnef_PFDmanagement"
 	"github.com/free5gc/openapi/models"
 	"github.com/free5gc/openapi/nef/PFDmanagement"
+	sbi_metrics "github.com/free5gc/util/metrics/sbi"
 )
 
 type PfdChangeNotifier struct {
@@ -45,6 +46,7 @@ func (n *PfdChangeNotifier) initPfdManagementApiClient() {
 	}
 
 	config := PFDmanagement.NewConfiguration()
+	config.SetMetrics(sbi_metrics.SbiMetricHook)
 	config.SetHTTPClient(http.DefaultClient)
 	n.clientPfdManagement = PFDmanagement.NewAPIClient(config)
 }

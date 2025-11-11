@@ -1112,7 +1112,7 @@ func TestValidatePfdData(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			rst := validatePfdData(tc.pfdData, nefApp.Context(), false)
+			rst := validatePfdData(tc.pfdData, false)
 			require.Equal(t, tc.expectedResult, rst)
 		})
 	}

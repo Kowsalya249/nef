@@ -16,6 +16,9 @@ import (
 	"github.com/free5gc/nef/internal/sbi/processor"
 	"github.com/free5gc/nef/pkg/app"
 	"github.com/free5gc/nef/pkg/factory"
+	"github.com/free5gc/util/metrics"
+	"github.com/free5gc/util/metrics/utils"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 )
 
@@ -26,15 +29,16 @@ var _ app.App = &NefApp{}
 type NefApp struct {
 	app.App
 
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	cfg       *factory.Config
-	nefCtx    *nef_context.NefContext
-	consumer  *consumer.Consumer
-	notifier  *notifier.Notifier
-	proc      *processor.Processor
-	sbiServer *sbi.Server
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
+	cfg           *factory.Config
+	nefCtx        *nef_context.NefContext
+	consumer      *consumer.Consumer
+	notifier      *notifier.Notifier
+	proc          *processor.Processor
+	sbiServer     *sbi.Server
+	metricsServer *metrics.Server
 }
 
 func NewApp(
@@ -67,7 +71,38 @@ func NewApp(
 	if nef.sbiServer, err = sbi.NewServer(nef, tlsKeyLogPath); err != nil {
 		return nil, err
 	}
+
+	// We launch the server only if the user specified it, but we still defined the metrics to avoid checking if
+	// the metrics are enabled each time the prometheus collector are called.
+	features := map[utils.MetricTypeEnabled]bool{utils.SBI: true}
+	customMetrics := make(map[utils.MetricTypeEnabled][]prometheus.Collector)
+	if cfg.AreMetricsEnabled() {
+		if nef.metricsServer, err = metrics.NewServer(
+			getInitMetrics(cfg, features, customMetrics), tlsKeyLogPath, logger.InitLog); err != nil {
+			return nil, err
+		}
+	}
+
 	return nef, nil
+}
+
+func getInitMetrics(
+	cfg *factory.Config,
+	features map[utils.MetricTypeEnabled]bool,
+	customMetrics map[utils.MetricTypeEnabled][]prometheus.Collector,
+) metrics.InitMetrics {
+	metricsInfo := metrics.Metrics{
+		BindingIPv4: cfg.GetMetricsBindingAddr(),
+		Scheme:      cfg.GetMetricsScheme(),
+		Namespace:   cfg.GetMetricsNamespace(),
+		Port:        cfg.GetMetricsPort(),
+		Tls: metrics.Tls{
+			Key: cfg.GetMetricsCertKeyPath(),
+			Pem: cfg.GetMetricsCertPemPath(),
+		},
+	}
+
+	return metrics.NewInitMetrics(metricsInfo, "amf", features, customMetrics)
 }
 
 func (a *NefApp) Terminate() {
@@ -166,6 +201,12 @@ func (a *NefApp) Start() error {
 		return err
 	}
 
+	if a.cfg.AreMetricsEnabled() && a.metricsServer != nil {
+		go func() {
+			a.metricsServer.Run(&a.wg)
+		}()
+	}
+
 	err := a.registerToNrf(a.ctx)
 	if err != nil {
 		logger.MainLog.Errorf("register to NRF failed: %+v", err)
@@ -191,12 +232,20 @@ func (a *NefApp) listenShutdownEvent() {
 	a.terminateProcedure()
 }
 
-func (a *NefApp) terminateProcedure() {
-	logger.MainLog.Infof("Terminating NEF...")
-
+func (a *NefApp) CallServersStop() {
 	if a.sbiServer != nil {
 		a.sbiServer.Terminate()
 	}
+
+	if a.metricsServer != nil {
+		a.metricsServer.Stop()
+	}
+}
+
+func (a *NefApp) terminateProcedure() {
+	logger.MainLog.Infof("Terminating NEF...")
+
+	a.CallServersStop()
 
 	// deregister with NRF
 	if _, err := a.consumer.DeregisterNFInstance(); err != nil {
