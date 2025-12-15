@@ -10,23 +10,33 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func (s *Server) getCallbackRoutes() []Route {
+func (s *Server) getAfSessionQosRoutes() []Route {
 	return []Route{
 		{
 			Method:  http.MethodPost,
-			Pattern: "/notification/smf",
-			APIFunc: s.apiPostSmfNotification,
+			Pattern: "/:afId/sessions",
+			APIFunc: s.apiPostAfSessionQos,
 		},
 		{
-			Method:  http.MethodPost,
-			Pattern: "/notification/qos/:corrId",
-			APIFunc: s.apiPostQosNotification,
+			Method:  http.MethodGet,
+			Pattern: "/:afId/sessions/:sessId",
+			APIFunc: s.apiGetAfSessionQos,
+		},
+		{
+			Method:  http.MethodPatch,
+			Pattern: "/:afId/sessions/:sessId",
+			APIFunc: s.apiPatchAfSessionQos,
+		},
+		{
+			Method:  http.MethodDelete,
+			Pattern: "/:afId/sessions/:sessId",
+			APIFunc: s.apiDeleteAfSessionQos,
 		},
 	}
 }
 
-func (s *Server) apiPostSmfNotification(gc *gin.Context) {
-	var eeNotif models.NsmfEventExposureNotification
+func (s *Server) apiPostAfSessionQos(gc *gin.Context) {
+	var asc models.AppSessionContext
 	reqBody, err := gc.GetRawData()
 	if err != nil {
 		logger.SBILog.Errorf("Get Request Body error: %+v", err)
@@ -36,8 +46,7 @@ func (s *Server) apiPostSmfNotification(gc *gin.Context) {
 		return
 	}
 
-	err = openapi.Deserialize(&eeNotif, reqBody, "application/json")
-	if err != nil {
+	if err := openapi.Deserialize(&asc, reqBody, "application/json"); err != nil {
 		logger.SBILog.Errorf("Deserialize Request Body error: %+v", err)
 		pd := openapi.ProblemDetailsMalformedReqSyntax(err.Error())
 		gc.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
@@ -45,10 +54,14 @@ func (s *Server) apiPostSmfNotification(gc *gin.Context) {
 		return
 	}
 
-	s.Processor().SmfNotification(gc, &eeNotif)
+	s.Processor().PostAfSessionQos(gc, gc.Param("afId"), &asc)
 }
 
-func (s *Server) apiPostQosNotification(gc *gin.Context) {
+func (s *Server) apiGetAfSessionQos(gc *gin.Context) {
+	s.Processor().GetAfSessionQos(gc, gc.Param("afId"), gc.Param("sessId"))
+}
+
+func (s *Server) apiPatchAfSessionQos(gc *gin.Context) {
 	var ascUpdate models.AppSessionContextUpdateData
 	reqBody, err := gc.GetRawData()
 	if err != nil {
@@ -67,5 +80,9 @@ func (s *Server) apiPostQosNotification(gc *gin.Context) {
 		return
 	}
 
-	s.Processor().AfSessionQosNotification(gc, gc.Param("corrId"), &ascUpdate)
+	s.Processor().PatchAfSessionQos(gc, gc.Param("afId"), gc.Param("sessId"), &ascUpdate)
+}
+
+func (s *Server) apiDeleteAfSessionQos(gc *gin.Context) {
+	s.Processor().DeleteAfSessionQos(gc, gc.Param("afId"), gc.Param("sessId"))
 }

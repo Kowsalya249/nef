@@ -82,6 +82,7 @@ func (c *NefContext) NewAf(afID string) *AfData {
 		AfID:     afID,
 		Subs:     make(map[string]*AfSubscription),
 		PfdTrans: make(map[string]*AfPfdTransaction),
+		QosSess:  make(map[string]*AfQosSession),
 		Log:      logger.CtxLog.WithField(logger.FieldAFID, fmt.Sprintf("AF:%s", afID)),
 	}
 	return af
@@ -144,6 +145,22 @@ func (c *NefContext) FindAfSub(CorrID string) (*AfData, *AfSubscription) {
 			if sub.NotifCorreID == CorrID {
 				defer af.Mu.RUnlock()
 				return af, sub
+			}
+		}
+		af.Mu.RUnlock()
+	}
+	return nil, nil
+}
+
+func (c *NefContext) FindAfQosSessionByCorrID(corrID string) (*AfData, *AfQosSession) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, af := range c.afs {
+		af.Mu.RLock()
+		for _, sess := range af.QosSess {
+			if sess.NotifCorrID == corrID {
+				defer af.Mu.RUnlock()
+				return af, sess
 			}
 		}
 		af.Mu.RUnlock()

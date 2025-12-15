@@ -23,6 +23,7 @@ const (
 	ServicePfdMng      string = "3gpp-pfd-management"
 	ServiceNefPfd      string = string(models.ServiceName_NNEF_PFDMANAGEMENT)
 	ServiceNefOam      string = "nnef-oam"
+	ServiceAfSessionQos string = "3gpp-af-session-with-qos"
 	ServiceNefCallback string = "nnef-callback"
 )
 
@@ -44,6 +45,7 @@ const (
 	PfdMngResUriPrefix         = "/" + ServicePfdMng + "/v1"
 	NefPfdMngResUriPrefix      = "/" + ServiceNefPfd + "/v1"
 	NefOamResUriPrefix         = "/" + ServiceNefOam + "/v1"
+	AfSessionQosResUriPrefix   = "/" + ServiceAfSessionQos + "/v1"
 	NefCallbackResUriPrefix    = "/" + ServiceNefCallback + "/v1"
 )
 
@@ -120,9 +122,11 @@ func (c *Configuration) validate() (bool, error) {
 		switch s.ServiceName {
 		case ServiceNefPfd:
 		case ServiceNefOam:
+		case ServiceAfSessionQos:
 		default:
 			err := errors.New("invalid serviceList[" + strconv.Itoa(i) + "]: " +
-				s.ServiceName + ", should be " + ServiceNefPfd + " or " + ServiceNefOam)
+				s.ServiceName + ", should be " + ServiceNefPfd + ", " + ServiceNefOam +
+				" or " + ServiceAfSessionQos)
 			return false, appendInvalid(err)
 		}
 	}

@@ -16,6 +16,7 @@ type AfData struct {
 	NumTransID uint64
 	Subs       map[string]*AfSubscription
 	PfdTrans   map[string]*AfPfdTransaction
+	QosSess    map[string]*AfQosSession
 	Mu         sync.RWMutex
 	Log        *logrus.Entry
 }
@@ -50,4 +51,20 @@ func (a *AfData) IsAppIDExisted(appID string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func (a *AfData) AddQosSession(sess *AfQosSession) {
+	if a.QosSess == nil {
+		a.QosSess = make(map[string]*AfQosSession)
+	}
+	a.QosSess[sess.SessID] = sess
+}
+
+func (a *AfData) GetQosSession(sessID string) (*AfQosSession, bool) {
+	sess, ok := a.QosSess[sessID]
+	return sess, ok
+}
+
+func (a *AfData) DeleteQosSession(sessID string) {
+	delete(a.QosSess, sessID)
 }
