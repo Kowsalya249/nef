@@ -145,6 +145,7 @@ func (s *npcfService) PostAppSessions(asc *models.AppSessionContext) (string, *m
 	appSessionsRequest := PolicyAuthorization.PostAppSessionsRequest{
 		AppSessionContext: asc,
 	}
+	setSupportedFeatures(&appSessionsRequest, getSupportedFeaturesFromAsc(asc))
 
 	postAppSessionsRsp, errPostAppSessionRsp := client.ApplicationSessionsCollectionApi.
 		PostAppSessions(ctx, &appSessionsRequest)
@@ -215,6 +216,7 @@ func (s *npcfService) PutAppSession(
 				AscReqData: ascUpdateData,
 			},
 		}
+		setSupportedFeatures(appSessModReq, getSupportedFeaturesFromAsc(ascUpdateData))
 		modRsp, err = client.IndividualApplicationSessionContextDocumentApi.ModAppSession(ctx, appSessModReq)
 
 		if modRsp != nil {
@@ -267,6 +269,7 @@ func (s *npcfService) PatchAppSession(appSessionId string,
 		AppSessionId:                     &appSessionId,
 		AppSessionContextUpdateDataPatch: &appSessionCtxUpdateDataPatch,
 	}
+	setSupportedFeatures(&modAppSessionReq, getSupportedFeaturesFromAsc(ascUpdateData))
 
 	modAppSessionRsp, errModAppSessionRsp := client.IndividualApplicationSessionContextDocumentApi.ModAppSession(
 		ctx, &modAppSessionReq)
@@ -365,4 +368,45 @@ func getAppSessIDFromRspLocationHeader(loc string) string {
 	}
 	logger.ConsumerLog.Infof("appSessID=%q", appSessID)
 	return appSessID
+}
+
+// getSupportedFeaturesFromAsc extracts SupportedFeatures string from a request payload if present.
+func getSupportedFeaturesFromAsc(obj interface{}) string {
+	if obj == nil {
+		return ""
+	}
+	v := reflect.ValueOf(obj)
+	if v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			return ""
+		}
+		v = v.Elem()
+	}
+	if !v.IsValid() {
+		return ""
+	}
+	sf := v.FieldByName("SupportedFeatures")
+	if sf.IsValid() && sf.Kind() == reflect.String {
+		return sf.String()
+	}
+	return ""
+}
+
+// setSupportedFeatures sets SupportedFeatures on a request struct if the field exists.
+func setSupportedFeatures(req interface{}, suppFeat string) {
+	if suppFeat == "" || req == nil {
+		return
+	}
+	v := reflect.ValueOf(req)
+	if v.Kind() != reflect.Ptr || v.IsNil() {
+		return
+	}
+	elem := v.Elem()
+	if !elem.IsValid() {
+		return
+	}
+	sf := elem.FieldByName("SupportedFeatures")
+	if sf.IsValid() && sf.CanSet() && sf.Kind() == reflect.String {
+		sf.SetString(suppFeat)
+	}
 }
