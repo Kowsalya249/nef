@@ -16,6 +16,10 @@ configuration:
   serviceList: # the SBI services provided by this NEF
     - serviceName: nnef-pfdmanagement # Nnef_PFDManagement Service
     - serviceName: nnef-oam # OAM service
+<<<<<<< Updated upstream
+=======
+    - serviceName: 3gpp-as-session-with-qos # AS Session with QoS Service
+>>>>>>> Stashed changes
 
 logger: # log output setting
   enable: true # true or false

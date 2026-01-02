@@ -16,6 +16,10 @@ type AfData struct {
 	NumTransID uint64
 	Subs       map[string]*AfSubscription
 	PfdTrans   map[string]*AfPfdTransaction
+<<<<<<< Updated upstream
+=======
+	QosSubs    map[string]*AfQosSubscription
+>>>>>>> Stashed changes
 	Mu         sync.RWMutex
 	Log        *logrus.Entry
 }
@@ -51,3 +55,22 @@ func (a *AfData) IsAppIDExisted(appID string) (string, bool) {
 	}
 	return "", false
 }
+<<<<<<< Updated upstream
+=======
+
+func (a *AfData) AddQosSubscription(sub *AfQosSubscription) {
+	if a.QosSubs == nil {
+		a.QosSubs = make(map[string]*AfQosSubscription)
+	}
+	a.QosSubs[sub.SubscriptionID] = sub
+}
+
+func (a *AfData) GetQosSubscription(subID string) (*AfQosSubscription, bool) {
+	sub, ok := a.QosSubs[subID]
+	return sub, ok
+}
+
+func (a *AfData) DeleteQosSubscription(subID string) {
+	delete(a.QosSubs, subID)
+}
+>>>>>>> Stashed changes

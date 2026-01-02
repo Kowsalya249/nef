@@ -65,6 +65,13 @@ func NewServer(nef nef, tlsKeyLogPath string) (*Server, error) {
 	group = s.router.Group(factory.NefCallbackResUriPrefix)
 	applyRoutes(group, endpoints)
 
+<<<<<<< Updated upstream
+=======
+	endpoints = s.getAsSessionQosRoutes()
+	group = s.router.Group(factory.AsSessionQosResUriPrefix)
+	applyRoutes(group, endpoints)
+
+>>>>>>> Stashed changes
 	s.router.Use(cors.New(cors.Config{
 		AllowMethods: []string{"GET", "POST", "OPTIONS", "PUT", "PATCH", "DELETE"},
 		AllowHeaders: []string{

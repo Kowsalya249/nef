@@ -42,3 +42,28 @@ func (s *Server) apiPostSmfNotification(gc *gin.Context) {
 
 	s.Processor().SmfNotification(gc, &eeNotif)
 }
+<<<<<<< Updated upstream
+=======
+
+func (s *Server) apiPostQosNotification(gc *gin.Context) {
+	var ascUpdate models.AppSessionContextUpdateData
+	reqBody, err := gc.GetRawData()
+	if err != nil {
+		logger.SBILog.Errorf("Get Request Body error: %+v", err)
+		pd := openapi.ProblemDetailsSystemFailure(err.Error())
+		gc.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
+		gc.JSON(http.StatusInternalServerError, pd)
+		return
+	}
+
+	if err := openapi.Deserialize(&ascUpdate, reqBody, "application/json"); err != nil {
+		logger.SBILog.Errorf("Deserialize Request Body error: %+v", err)
+		pd := openapi.ProblemDetailsMalformedReqSyntax(err.Error())
+		gc.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
+		gc.JSON(http.StatusBadRequest, pd)
+		return
+	}
+
+	s.Processor().AsSessionQosNotification(gc, gc.Param("corrId"), &ascUpdate)
+}
+>>>>>>> Stashed changes

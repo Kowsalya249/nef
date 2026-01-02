@@ -82,6 +82,10 @@ func (c *NefContext) NewAf(afID string) *AfData {
 		AfID:     afID,
 		Subs:     make(map[string]*AfSubscription),
 		PfdTrans: make(map[string]*AfPfdTransaction),
+<<<<<<< Updated upstream
+=======
+		QosSubs:  make(map[string]*AfQosSubscription),
+>>>>>>> Stashed changes
 		Log:      logger.CtxLog.WithField(logger.FieldAFID, fmt.Sprintf("AF:%s", afID)),
 	}
 	return af
@@ -151,6 +155,25 @@ func (c *NefContext) FindAfSub(CorrID string) (*AfData, *AfSubscription) {
 	return nil, nil
 }
 
+<<<<<<< Updated upstream
+=======
+func (c *NefContext) FindAfQosSubscriptionByCorrID(corrID string) (*AfData, *AfQosSubscription) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, af := range c.afs {
+		af.Mu.RLock()
+		for _, sub := range af.QosSubs {
+			if sub.NotifCorrID == corrID {
+				defer af.Mu.RUnlock()
+				return af, sub
+			}
+		}
+		af.Mu.RUnlock()
+	}
+	return nil, nil
+}
+
+>>>>>>> Stashed changes
 func (c *NefContext) GetTokenCtx(serviceName models.ServiceName, targetNF models.NrfNfManagementNfType) (
 	context.Context, *models.ProblemDetails, error,
 ) {

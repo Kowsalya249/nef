@@ -19,11 +19,20 @@ import (
 )
 
 const (
+<<<<<<< Updated upstream
 	ServiceTraffInflu  string = "3gpp-traffic-influence"
 	ServicePfdMng      string = "3gpp-pfd-management"
 	ServiceNefPfd      string = string(models.ServiceName_NNEF_PFDMANAGEMENT)
 	ServiceNefOam      string = "nnef-oam"
 	ServiceNefCallback string = "nnef-callback"
+=======
+	ServiceTraffInflu   string = "3gpp-traffic-influence"
+	ServicePfdMng       string = "3gpp-pfd-management"
+	ServiceNefPfd       string = string(models.ServiceName_NNEF_PFDMANAGEMENT)
+	ServiceNefOam       string = "nnef-oam"
+	ServiceAsSessionQos string = "3gpp-as-session-with-qos"
+	ServiceNefCallback  string = "nnef-callback"
+>>>>>>> Stashed changes
 )
 
 const (
@@ -44,6 +53,10 @@ const (
 	PfdMngResUriPrefix         = "/" + ServicePfdMng + "/v1"
 	NefPfdMngResUriPrefix      = "/" + ServiceNefPfd + "/v1"
 	NefOamResUriPrefix         = "/" + ServiceNefOam + "/v1"
+<<<<<<< Updated upstream
+=======
+	AsSessionQosResUriPrefix   = "/" + ServiceAsSessionQos + "/v1"
+>>>>>>> Stashed changes
 	NefCallbackResUriPrefix    = "/" + ServiceNefCallback + "/v1"
 )
 
@@ -120,9 +133,17 @@ func (c *Configuration) validate() (bool, error) {
 		switch s.ServiceName {
 		case ServiceNefPfd:
 		case ServiceNefOam:
+<<<<<<< Updated upstream
 		default:
 			err := errors.New("invalid serviceList[" + strconv.Itoa(i) + "]: " +
 				s.ServiceName + ", should be " + ServiceNefPfd + " or " + ServiceNefOam)
+=======
+		case ServiceAsSessionQos:
+		default:
+			err := errors.New("invalid serviceList[" + strconv.Itoa(i) + "]: " +
+				s.ServiceName + ", should be " + ServiceNefPfd + ", " + ServiceNefOam +
+				" or " + ServiceAsSessionQos)
+>>>>>>> Stashed changes
 			return false, appendInvalid(err)
 		}
 	}
@@ -538,6 +559,8 @@ func (c *Config) ServiceUri(name string) string {
 		return c.SbiUri() + NefOamResUriPrefix
 	case ServiceNefCallback:
 		return c.SbiUri() + NefCallbackResUriPrefix
+	case ServiceAsSessionQos:
+		return c.SbiUri() + AsSessionQosResUriPrefix
 	default:
 		return ""
 	}
